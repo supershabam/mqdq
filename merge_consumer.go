@@ -19,6 +19,7 @@ func (c *MergeConsumer) Consume() <-chan Delivery {
 	out := make(chan Delivery)
 
 	for _, consumer := range c.Consumers {
+		wg.Add(1)
 		go func(consumer Consumer) {
 			for d := range consumer.Consume() {
 				out <- d
