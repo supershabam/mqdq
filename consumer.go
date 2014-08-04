@@ -1,6 +1,7 @@
 package mqhammer
 
 type Consumer interface {
-	Consume(<-chan struct{}) (<-chan Delivery, error)
+	Consume() <-chan Delivery
 	Err() error
+	Stop()
 }

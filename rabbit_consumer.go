@@ -1,6 +1,8 @@
 package mqhammer
 
 import (
+	"sync"
+
 	"github.com/streadway/amqp"
 )
 
@@ -11,15 +13,6 @@ type RabbitConsumerConfig struct {
 	Queue        string
 	Key          string
 	ConsumerTag  string
-}
-
-type RabbitConsumer struct {
-	Config RabbitConsumerConfig
-	err    error
-}
-
-func (c RabbitConsumer) Err() error {
-	return c.err
 }
 
 type rabbitAcknowledger struct {
@@ -34,8 +27,16 @@ func (a rabbitAcknowledger) Nack() {
 	a.d.Nack(false, true)
 }
 
-func (c *RabbitConsumer) Consume(done <-chan struct{}) (<-chan Delivery, error) {
-	conn, err := amqp.Dial(c.Config.URI)
+type RabbitConsumer struct {
+	conn *amqp.Connection
+	done chan struct{}
+	in   <-chan amqp.Delivery
+	once sync.Once
+	err  error
+}
+
+func NewRabbitConsumer(config RabbitConsumerConfig) (*RabbitConsumer, error) {
+	conn, err := amqp.Dial(config.URI)
 	if err != nil {
 		return nil, err
 	}
@@ -44,65 +45,94 @@ func (c *RabbitConsumer) Consume(done <-chan struct{}) (<-chan Delivery, error) 
 		return nil, err
 	}
 	if err := channel.ExchangeDeclare(
-		c.Config.Exchange,     // name of the exchange
-		c.Config.ExchangeType, // type
-		true,  // durable
-		false, // delete when complete
-		false, // internal
-		false, // noWait
-		nil,   // arguments
+		config.Exchange,     // name of the exchange
+		config.ExchangeType, // type
+		true,                // durable
+		false,               // delete when complete
+		false,               // internal
+		false,               // noWait
+		nil,                 // arguments
 	); err != nil {
 		return nil, err
 	}
 	_, err = channel.QueueDeclare(
-		c.Config.Queue, // name of the queue
-		true,           // durable
-		false,          // delete when usused
-		false,          // exclusive
-		false,          // noWait
-		nil,            // arguments
+		config.Queue, // name of the queue
+		true,         // durable
+		false,        // delete when usused
+		false,        // exclusive
+		false,        // noWait
+		nil,          // arguments
 	)
 	if err != nil {
 		return nil, err
 	}
 	if err = channel.QueueBind(
-		c.Config.Queue,    // name of the queue
-		c.Config.Key,      // bindingKey
-		c.Config.Exchange, // sourceExchange
-		false,             // noWait
-		nil,               // arguments
+		config.Queue,    // name of the queue
+		config.Key,      // bindingKey
+		config.Exchange, // sourceExchange
+		false,           // noWait
+		nil,             // arguments
 	); err != nil {
 		return nil, err
 	}
 	in, err := channel.Consume(
-		c.Config.Queue,       // name
-		c.Config.ConsumerTag, // consumerTag,
-		false,                // noAck
-		false,                // exclusive
-		false,                // noLocal
-		false,                // noWait
-		nil,                  // arguments
+		config.Queue,       // name
+		config.ConsumerTag, // consumerTag,
+		false,              // noAck
+		false,              // exclusive
+		false,              // noLocal
+		false,              // noWait
+		nil,                // arguments
 	)
 	if err != nil {
 		return nil, err
 	}
+	return &RabbitConsumer{
+		conn: conn,
+		in:   in,
+		done: make(chan struct{}),
+	}, nil
+}
+
+func (c RabbitConsumer) Err() error {
+	return c.err
+}
+
+func (c *RabbitConsumer) Stop() {
+	c.once.Do(func() {
+		close(c.done)
+	})
+}
+
+// Consume returns a channel of Deliveries which are acknowledgable bundles
+// of []byte. You must either Nack or Ack a Delivery so that the message
+// queue can acknowledge that the message has been processed (or will not
+// be processed).
+func (c *RabbitConsumer) Consume() <-chan Delivery {
+	var shutdown bool
 	out := make(chan Delivery)
-	closed := false
+
 	go func() {
 		defer close(out)
 
 		for {
 			select {
-			case <-done:
-				closed = true
-				// this will cause "in" to close
-				conn.Close()
-			case d, ok := <-in:
+			case <-c.done:
+				shutdown = true
+				// closing the conn will cause "in" to close, but we may
+				// still have messages in-flight that we need to handle
+				if err := c.conn.Close(); err != nil {
+					c.err = err
+					return
+				}
+			case d, ok := <-c.in:
+				// return if channel is closed
 				if !ok {
 					return
 				}
-				if closed {
-					// make sure mq knows we are not fulfilling the message
+				if shutdown {
+					// make sure mq knows we are NOT fulfilling the message
+					// that it had buffered up for us to process
 					// multiple=false, requeue=true
 					d.Nack(false, true)
 					continue
@@ -114,5 +144,5 @@ func (c *RabbitConsumer) Consume(done <-chan struct{}) (<-chan Delivery, error) 
 			}
 		}
 	}()
-	return out, nil
+	return out
 }
