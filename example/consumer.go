@@ -10,7 +10,7 @@ func main() {
 
 	c := mqhammer.RabbitConsumer{
 		Config: mqhammer.RabbitConsumerConfig{
-			URI:         "amqp://localhost",
+			URI:         "amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj",
 			Exchange:    "a",
 			Queue:       "a",
 			Key:         "a",
