@@ -1,6 +1,9 @@
 package mqhammer
 
 import (
+	"crypto/rand"
+	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/streadway/amqp"
@@ -12,7 +15,47 @@ type RabbitConsumerConfig struct {
 	ExchangeType string
 	Queue        string
 	Key          string
-	ConsumerTag  string
+}
+
+// ParseRabbitConsumerConfig parses an amqp schemed url string
+// and sets the config parameters based on the querystring values
+func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
+	config := &RabbitConsumerConfig{}
+
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return nil, err
+	}
+
+	if u.Scheme != "amqp" {
+		return nil, fmt.Errorf("expected scheme: amqp")
+	}
+
+	config.Exchange = u.Query().Get("exchange")
+	if len(config.Exchange) == 0 {
+		return nil, fmt.Errorf("expected query parameter: exchange")
+	}
+
+	config.ExchangeType = u.Query().Get("exchange_type")
+	switch config.ExchangeType {
+	case "direct", "fanout", "topic", "x-custom":
+	default:
+		return nil, fmt.Errorf("expected exchange type: %s", config.ExchangeType)
+	}
+
+	config.Queue = u.Query().Get("queue")
+	if len(config.Queue) == 0 {
+		return nil, fmt.Errorf("expected query parameter: queue")
+	}
+
+	config.Key = u.Query().Get("key")
+	if len(config.Key) == 0 {
+		return nil, fmt.Errorf("expected query parameter: key")
+	}
+
+	u.RawQuery = ""
+	config.URI = u.String()
+	return config, nil
 }
 
 type rabbitAcknowledger struct {
@@ -28,14 +71,19 @@ func (a rabbitAcknowledger) Nack() {
 }
 
 type RabbitConsumer struct {
-	conn *amqp.Connection
-	done chan struct{}
-	in   <-chan amqp.Delivery
-	once sync.Once
-	err  error
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	done    chan struct{}
+	in      <-chan amqp.Delivery
+	once    sync.Once
+	err     error
 }
 
-func NewRabbitConsumer(config RabbitConsumerConfig) (*RabbitConsumer, error) {
+func NewRabbitConsumer(rawurl string) (*RabbitConsumer, error) {
+	config, err := ParseRabbitConsumerConfig(rawurl)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := amqp.Dial(config.URI)
 	if err != nil {
 		return nil, err
@@ -75,22 +123,27 @@ func NewRabbitConsumer(config RabbitConsumerConfig) (*RabbitConsumer, error) {
 	); err != nil {
 		return nil, err
 	}
+
+	consumerTagBytes := make([]byte, 16)
+	rand.Read(consumerTagBytes)
+
 	in, err := channel.Consume(
-		config.Queue,       // name
-		config.ConsumerTag, // consumerTag,
-		false,              // noAck
-		false,              // exclusive
-		false,              // noLocal
-		false,              // noWait
-		nil,                // arguments
+		config.Queue,                        // name
+		fmt.Sprintf("%x", consumerTagBytes), // consumerTag,
+		false, // noAck
+		false, // exclusive
+		false, // noLocal
+		false, // noWait
+		nil,   // arguments
 	)
 	if err != nil {
 		return nil, err
 	}
 	return &RabbitConsumer{
-		conn: conn,
-		in:   in,
-		done: make(chan struct{}),
+		conn:    conn,
+		channel: channel,
+		in:      in,
+		done:    make(chan struct{}),
 	}, nil
 }
 
@@ -114,14 +167,15 @@ func (c *RabbitConsumer) Consume() <-chan Delivery {
 
 	go func() {
 		defer close(out)
+		defer c.conn.Close()
 
 		for {
 			select {
 			case <-c.done:
 				shutdown = true
-				// closing the conn will cause "in" to close, but we may
+				// closing the channel will cause "in" to close, but we may
 				// still have messages in-flight that we need to handle
-				if err := c.conn.Close(); err != nil {
+				if err := c.channel.Close(); err != nil {
 					c.err = err
 					return
 				}

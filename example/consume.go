@@ -8,25 +8,11 @@ import (
 )
 
 func main() {
-	mq1, err := mqhammer.NewRabbitConsumer(mqhammer.RabbitConsumerConfig{
-		URI:          "amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj",
-		Exchange:     "a",
-		ExchangeType: "direct",
-		Queue:        "a",
-		Key:          "a",
-		ConsumerTag:  "1",
-	})
+	mq1, err := mqhammer.NewRabbitConsumer("amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj?exchange=1&exchange_type=direct&queue=a&key=a")
 	if err != nil {
 		log.Fatal(err)
 	}
-	mq2, err := mqhammer.NewRabbitConsumer(mqhammer.RabbitConsumerConfig{
-		URI:          "amqp://rfvrpejq:nqWGhu9KaPPqwgdqVpfr0RtDVTGPqHuD@tiger.cloudamqp.com/rfvrpejq",
-		Exchange:     "a",
-		ExchangeType: "direct",
-		Queue:        "a",
-		Key:          "a",
-		ConsumerTag:  "1",
-	})
+	mq2, err := mqhammer.NewRabbitConsumer("amqp://rfvrpejq:nqWGhu9KaPPqwgdqVpfr0RtDVTGPqHuD@tiger.cloudamqp.com/rfvrpejq?exchange=1&exchange_type=direct&queue=a&key=a")
 	if err != nil {
 		log.Fatal(err)
 	}
