@@ -7,19 +7,17 @@ import (
 )
 
 type Reconnector struct {
-	c       Consumer
-	d       time.Duration
-	done    chan struct{}
-	nc      NewConsumer
-	err     error
-	once    *sync.Once
-	stopped bool
+	err  error
+	d    time.Duration
+	done chan struct{}
+	nc   NewConsumer
+	once *sync.Once
 }
 
 func NewReconnector(nc NewConsumer, d time.Duration) *Reconnector {
 	return &Reconnector{
-		nc:   nc,
 		d:    d,
+		nc:   nc,
 		done: make(chan struct{}),
 		once: &sync.Once{},
 	}
@@ -35,29 +33,37 @@ func (r *Reconnector) Consume() <-chan Delivery {
 	go func() {
 		defer close(out)
 
-		for {
-
+	Loop:
+		c, err := r.nc()
+		if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
 			select {
-			case <-r.done:
+			case <-done:
 				return
-			default:
+			case <-time.After(r.d):
+				goto Loop
 			}
-			c, err := r.nc()
-			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
-				time.Sleep(r.d)
-				continue
-			}
-			if err != nil {
-				r.err = err
-				return
-			}
-			r.c = c
-			for d := range c.Consume() {
+		}
+		if err != nil {
+			r.err = err
+			return
+		}
+		in := c.Consume()
+		for {
+			select {
+			case <-done:
+				c.Stop()
+			case d, ok := <-in:
+				if !ok {
+					err := c.Err()
+					if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
+						goto Loop
+					}
+					if err != nil {
+						r.err = err
+					}
+					return
+				}
 				out <- d
-			}
-			if err := c.Err(); err != nil {
-				r.err = err
-				return
 			}
 		}
 	}()
@@ -72,7 +78,6 @@ func (r Reconnector) Err() error {
 // Stop tells the sub consumer to stop (or if we're sleeping to stop)
 func (r *Reconnector) Stop() {
 	r.once.Do(func() {
-		r.stopped = true
 		close(r.done)
 	})
 }
