@@ -1,4 +1,4 @@
-package mqhammer
+package impl
 
 import (
 	"crypto/rand"
@@ -59,15 +59,23 @@ func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
 }
 
 type rabbitAcknowledger struct {
-	d amqp.Delivery
+	d    amqp.Delivery
+	wg   *sync.WaitGroup
+	once *sync.Once
 }
 
 func (a rabbitAcknowledger) Ack() {
 	a.d.Ack(false)
+	a.once.Do(func() {
+		a.wg.Done()
+	})
 }
 
 func (a rabbitAcknowledger) Nack() {
 	a.d.Nack(false, true)
+	a.once.Do(func() {
+		a.wg.Done()
+	})
 }
 
 type RabbitConsumer struct {
