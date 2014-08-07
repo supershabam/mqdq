@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	uri          = flag.String("uri", "amqp://rfvrpejq:nqWGhu9KaPPqwgdqVpfr0RtDVTGPqHuD@tiger.cloudamqp.com/rfvrpejq", "AMQP URI")
+	uri          = flag.String("uri", "amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj", "AMQP URI")
 	exchangeName = flag.String("exchange", "a", "Durable AMQP exchange name")
 	exchangeType = flag.String("exchange-type", "direct", "Exchange type - direct|fanout|topic|x-custom")
 	routingKey   = flag.String("key", "a", "AMQP routing key")

@@ -9,7 +9,7 @@ type Merger struct {
 	first     error
 }
 
-func NewMerger(consumers ...[]Consumer) *Merger {
+func NewMerger(consumers ...Consumer) *Merger {
 	return &Merger{
 		Consumers: consumers,
 	}
@@ -61,9 +61,7 @@ func (c Merger) Err() error {
 // once the Consume channel closes, the consumption has come to a full
 // stop.
 func (c *Merger) Stop() {
-	c.once.Do(func() {
-		for _, consumer := range c.Consumers {
-			consumer.Stop()
-		}
-	})
+	for _, consumer := range c.Consumers {
+		consumer.Stop()
+	}
 }

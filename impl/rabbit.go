@@ -3,13 +3,16 @@ package impl
 import (
 	"crypto/rand"
 	"fmt"
+	// "net"
 	"net/url"
 	"sync"
+
+	"github.com/supershabam/mqhammer"
 
 	"github.com/streadway/amqp"
 )
 
-type RabbitConsumerConfig struct {
+type RabbitConfig struct {
 	URI          string
 	Exchange     string
 	ExchangeType string
@@ -17,10 +20,10 @@ type RabbitConsumerConfig struct {
 	Key          string
 }
 
-// ParseRabbitConsumerConfig parses an amqp schemed url string
+// ParseRabbitConfig parses an amqp schemed url string
 // and sets the config parameters based on the querystring values
-func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
-	config := &RabbitConsumerConfig{}
+func ParseRabbitConfig(rawurl string) (*RabbitConfig, error) {
+	config := &RabbitConfig{}
 
 	u, err := url.Parse(rawurl)
 	if err != nil {
@@ -64,6 +67,15 @@ type rabbitAcknowledger struct {
 	once *sync.Once
 }
 
+func newRabbitAcknowledger(d amqp.Delivery, wg *sync.WaitGroup) *rabbitAcknowledger {
+	wg.Add(1)
+	return &rabbitAcknowledger{
+		d:    d,
+		wg:   wg,
+		once: &sync.Once{},
+	}
+}
+
 func (a rabbitAcknowledger) Ack() {
 	a.d.Ack(false)
 	a.once.Do(func() {
@@ -78,20 +90,25 @@ func (a rabbitAcknowledger) Nack() {
 	})
 }
 
-type RabbitConsumer struct {
+type Rabbit struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
 	done    chan struct{}
 	in      <-chan amqp.Delivery
-	once    sync.Once
+	once    *sync.Once
 	err     error
+	wg      *sync.WaitGroup
 }
 
-func NewRabbitConsumer(rawurl string) (*RabbitConsumer, error) {
-	config, err := ParseRabbitConsumerConfig(rawurl)
+func NewRabbitURL(rawurl string) (*Rabbit, error) {
+	config, err := ParseRabbitConfig(rawurl)
 	if err != nil {
 		return nil, err
 	}
+	return NewRabbit(config)
+}
+
+func NewRabbit(config *RabbitConfig) (*Rabbit, error) {
 	conn, err := amqp.Dial(config.URI)
 	if err != nil {
 		return nil, err
@@ -147,19 +164,21 @@ func NewRabbitConsumer(rawurl string) (*RabbitConsumer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &RabbitConsumer{
+	return &Rabbit{
 		conn:    conn,
 		channel: channel,
 		in:      in,
 		done:    make(chan struct{}),
+		once:    &sync.Once{},
+		wg:      &sync.WaitGroup{},
 	}, nil
 }
 
-func (c RabbitConsumer) Err() error {
+func (c Rabbit) Err() error {
 	return c.err
 }
 
-func (c *RabbitConsumer) Stop() {
+func (c *Rabbit) Stop() {
 	c.once.Do(func() {
 		close(c.done)
 	})
@@ -169,39 +188,32 @@ func (c *RabbitConsumer) Stop() {
 // of []byte. You must either Nack or Ack a Delivery so that the message
 // queue can acknowledge that the message has been processed (or will not
 // be processed).
-func (c *RabbitConsumer) Consume() <-chan Delivery {
-	var shutdown bool
-	out := make(chan Delivery)
-
+func (c *Rabbit) Consume() <-chan mqhammer.Delivery {
+	out := make(chan mqhammer.Delivery)
 	go func() {
 		defer close(out)
 		defer c.conn.Close()
-
 		for {
 			select {
 			case <-c.done:
-				shutdown = true
-				// closing the channel will cause "in" to close, but we may
-				// still have messages in-flight that we need to handle
 				if err := c.channel.Close(); err != nil {
 					c.err = err
 					return
 				}
 			case d, ok := <-c.in:
-				// return if channel is closed
 				if !ok {
+					c.wg.Wait()
 					return
 				}
-				if shutdown {
-					// make sure mq knows we are NOT fulfilling the message
-					// that it had buffered up for us to process
-					// multiple=false, requeue=true
-					d.Nack(false, true)
-					continue
-				}
-				out <- Delivery{
-					Ackr: rabbitAcknowledger{d},
-					Msg:  d.Body,
+				ackr := newRabbitAcknowledger(d, c.wg)
+				select {
+				case <-c.done:
+					ackr.Nack()
+				default:
+					out <- mqhammer.Delivery{
+						Ackr: ackr,
+						Msg:  d.Body,
+					}
 				}
 			}
 		}

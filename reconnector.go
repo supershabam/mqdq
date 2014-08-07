@@ -37,7 +37,7 @@ func (r *Reconnector) Consume() <-chan Delivery {
 		c, err := r.nc()
 		if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
 			select {
-			case <-done:
+			case <-r.done:
 				return
 			case <-time.After(r.d):
 				goto Loop
@@ -50,7 +50,7 @@ func (r *Reconnector) Consume() <-chan Delivery {
 		in := c.Consume()
 		for {
 			select {
-			case <-done:
+			case <-r.done:
 				c.Stop()
 			case d, ok := <-in:
 				if !ok {
@@ -61,7 +61,7 @@ func (r *Reconnector) Consume() <-chan Delivery {
 					if err != nil {
 						r.err = err
 					}
-					return
+					goto Loop
 				}
 				out <- d
 			}
