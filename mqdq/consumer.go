@@ -1,6 +1,4 @@
-package mqhammer
-
-type NewConsumer func() (Consumer, error)
+package mqdq
 
 type Consumer interface {
 	Consume() <-chan Delivery

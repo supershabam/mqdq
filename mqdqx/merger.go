@@ -1,4 +1,4 @@
-package mqhammer
+package mqdqx
 
 import (
 	"sync"

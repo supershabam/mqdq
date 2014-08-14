@@ -1,4 +1,4 @@
-package mqhammer
+package mqdq
 
 type Delivery struct {
 	Ackr Acknowledger
