@@ -8,11 +8,11 @@ import (
 )
 
 func main() {
-	r1, err := rabbit.NewConsumer("amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj?exchange=r1&queue=r1&bind_key=r1")
+	r1, err := rabbit.NewConsumer("amqp://localhost?exchange=r1&queue=r1&bind_key=r1")
 	if err != nil {
 		log.Fatal(err)
 	}
-	r2, err := rabbit.NewConsumer("amqp://dggjvxhj:QwKHxFeKPxRvpQ_HwRVOYzFfE1-lsy7h@tiger.cloudamqp.com/dggjvxhj?exchange=r2&queue=r2&bind_key=r2")
+	r2, err := rabbit.NewConsumer("amqp://localhost?exchange=r2&queue=r2&bind_key=r2")
 	if err != nil {
 		log.Fatal(err)
 	}
