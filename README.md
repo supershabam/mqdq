@@ -1,9 +1,11 @@
 mqdq
 ====
 
-Are you hungry for some data? Do you feel like consuming messages? How do you feel about cheesy package names?
+_Message Queue Dequeue_
 
-Implementations of the interface are up to you. My impl folder is for your own risk.
+This is an interface for consuming from a message queue that gives you some composibility.
+
+Mix and match consuming from multiple message queue backends or configurations.
 
 ### LICENSE 
 
