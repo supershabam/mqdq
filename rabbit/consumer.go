@@ -1,4 +1,4 @@
-package mqdqx
+package rabbit
 
 import (
 	"crypto/rand"
@@ -9,20 +9,21 @@ import (
 	"github.com/supershabam/mqdq/mqdq"
 )
 
-type RabbitConsumerConfig struct {
+type ConsumerConfig struct {
 	BindKey      string
 	ConsumerTag  string
 	Durable      bool
 	Exchange     string
 	ExchangeType string
+	NoWait       bool
 	Queue        string
 	URI          string
 }
 
-// ParseRabbitConsumerConfig parses an amqp schemed url string
+// ParseConsumerConfig parses an amqp schemed url string
 // and sets the config parameters based on the querystring values
-func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
-	config := &RabbitConsumerConfig{}
+func ParseConsumerConfig(rawurl string) (*ConsumerConfig, error) {
+	config := &ConsumerConfig{}
 
 	u, err := url.Parse(rawurl)
 	if err != nil {
@@ -73,6 +74,16 @@ func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
 		return nil, fmt.Errorf("invalid exchange type %s", config.ExchangeType)
 	}
 
+	// nowait defaults to false if not set, and may be set to "true" or "false"
+	switch u.Query().Get("nowait") {
+	case "", "false":
+		config.NoWait = false
+	case "true":
+		config.NoWait = true
+	default:
+		return nil, fmt.Errorf("invalid value for nowait, must be true or false")
+	}
+
 	// queue is required
 	config.Queue = u.Query().Get("queue")
 	if len(config.Queue) == 0 {
@@ -85,35 +96,35 @@ func ParseRabbitConsumerConfig(rawurl string) (*RabbitConsumerConfig, error) {
 	return config, nil
 }
 
-// RabbitAcknowledger lets us acknowledge rabbitConsumer messages once they're processed
+// Acknowledger lets us acknowledge Consumer messages once they're processed
 // in a generic way
-type RabbitAcknowledger struct {
+type Acknowledger struct {
 	Delivery amqp.Delivery
 }
 
 // Ack says a message has been handled
-func (a RabbitAcknowledger) Ack() {
+func (a Acknowledger) Ack() {
 	a.Delivery.Ack(false)
 }
 
 // Nack says that I received a message, but will not be handling it, pass it
 // to somebody else
-func (a RabbitAcknowledger) Nack() {
+func (a Acknowledger) Nack() {
 	a.Delivery.Nack(false, true)
 }
 
-type RabbitConsumer struct {
-	Config RabbitConsumerConfig
+type Consumer struct {
+	Config ConsumerConfig
 	done   chan struct{}
 	err    error
 }
 
-func NewRabbitConsumer(rawurl string) (*RabbitConsumer, error) {
-	config, err := ParseRabbitConsumerConfig(rawurl)
+func NewConsumer(rawurl string) (*Consumer, error) {
+	config, err := ParseConsumerConfig(rawurl)
 	if err != nil {
 		return nil, err
 	}
-	return &RabbitConsumer{
+	return &Consumer{
 		Config: *config,
 		done:   make(chan struct{}),
 	}, nil
@@ -123,18 +134,18 @@ func NewRabbitConsumer(rawurl string) (*RabbitConsumer, error) {
 // of []byte. You must either Nack or Ack a Delivery so that the message
 // queue can acknowledge that the message has been processed (or will not
 // be processed).
-func (c *RabbitConsumer) Consume() <-chan mqdq.Delivery {
+func (c *Consumer) Consume() <-chan mqdq.Delivery {
 	out := make(chan mqdq.Delivery)
 	go func() {
 		defer close(out)
 
-		conn, channel, err := boundRabbitConsumerConnChannel(c.Config)
+		conn, channel, err := boundConnChannel(c.Config)
 		if err != nil {
 			c.err = err
 			return
 		}
 
-		// when we're exiting, close the rabbitConsumer connection after in-flight
+		// when we're exiting, close the Consumer connection after in-flight
 		// acknowledgements complete
 		defer func() {
 			conn.Close()
@@ -172,7 +183,7 @@ func (c *RabbitConsumer) Consume() <-chan mqdq.Delivery {
 					// noop
 				default:
 					out <- mqdq.Delivery{
-						Ackr: RabbitAcknowledger{rabbitDelivery},
+						Ackr: Acknowledger{rabbitDelivery},
 						Msg:  rabbitDelivery.Body,
 					}
 				}
@@ -182,15 +193,15 @@ func (c *RabbitConsumer) Consume() <-chan mqdq.Delivery {
 	return out
 }
 
-func (c RabbitConsumer) Err() error {
+func (c Consumer) Err() error {
 	return c.err
 }
 
-func (c *RabbitConsumer) Stop() {
+func (c *Consumer) Stop() {
 	close(c.done)
 }
 
-func boundRabbitConsumerConnChannel(config RabbitConsumerConfig) (conn *amqp.Connection, channel *amqp.Channel, err error) {
+func boundConnChannel(config ConsumerConfig) (conn *amqp.Connection, channel *amqp.Channel, err error) {
 	// handle shutting down conn on error for all return paths
 	defer func() {
 		if err != nil && conn != nil {
@@ -214,7 +225,7 @@ func boundRabbitConsumerConnChannel(config RabbitConsumerConfig) (conn *amqp.Con
 		config.Durable,      // durable
 		false,               // delete when complete
 		false,               // internal
-		false,               // noWait
+		config.NoWait,       // noWait
 		nil,                 // arguments
 	)
 	if err != nil {
@@ -226,7 +237,7 @@ func boundRabbitConsumerConnChannel(config RabbitConsumerConfig) (conn *amqp.Con
 		config.Durable, // durable
 		false,          // delete when usused
 		false,          // exclusive
-		false,          // noWait
+		config.NoWait,  // noWait
 		nil,            // arguments
 	)
 	if err != nil {
@@ -237,7 +248,7 @@ func boundRabbitConsumerConnChannel(config RabbitConsumerConfig) (conn *amqp.Con
 		config.Queue,    // name of the queue
 		config.BindKey,  // bindingKey
 		config.Exchange, // sourceExchange
-		false,           // noWait
+		config.NoWait,   // noWait
 		nil,             // arguments
 	)
 
